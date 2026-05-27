@@ -137,10 +137,42 @@ module Agents
     
       return JSON.parse(response.body)['accessJwt']
     end
-    
+
+  def link_facets(message)
+    [].tap do |facets|
+      matches = []
+      message.scan(URI::RFC2396_PARSER.make_regexp(["http", "https"])) { matches << Regexp.last_match }
+      matches.each do |match|
+        start, stop = match.byteoffset(0)
+        facets << {
+          "index" => { "byteStart" => start, "byteEnd" => stop },
+          "features" => [{ "uri" => match[0], "$type" => "app.bsky.richtext.facet#link" }]
+        }
+      end
+    end
+  end
+
+  def tag_facets(message)
+    [].tap do |facets|
+      matches = []
+      message.scan(/(^|[^\w])(#[\w\-]+)/) { matches << Regexp.last_match }
+      matches.each do |match|
+        start, stop = match.byteoffset(2)
+        facets << {
+          "index" => { "byteStart" => start, "byteEnd" => stop },
+          "features" => [{ "tag" => match[2].delete_prefix("#"), "$type" => "app.bsky.richtext.facet#tag" }]
+        }
+      end
+    end
+  end
+
     def publish()
 
       did = generate_did()    
+
+      facets = link_facets(interpolated['message'])
+      facets += tag_facets(interpolated['message'])
+
       uri = URI.parse("https://bsky.social/xrpc/com.atproto.repo.createRecord")
       request = Net::HTTP::Post.new(uri)
       request.content_type = "application/json"
@@ -150,6 +182,7 @@ module Agents
         "repo" => did,
         "record" => {
           "text" => interpolated['message'],
+          "facets" => facets,
           "createdAt" => Time.now.strftime('%Y-%m-%dT%H:%M:%S.%3NZ'),
           "$type" => "app.bsky.feed.post"
         }
